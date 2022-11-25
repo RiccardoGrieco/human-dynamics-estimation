@@ -38,7 +38,7 @@ const std::string LogPrefix = DeviceName + " :";
 // Timeout in seconds for checking that the iHumanState interface is providing consistent data
 constexpr double INTERFACE_CHECK_TIMEOUT_S = 10;
 
-constexpr double DefaultPeriod = 0.01;
+constexpr double DefaultPeriod = 0.01; 
 
 using namespace hde::devices;
 using namespace hde::devices::impl;
@@ -60,6 +60,7 @@ enum rpcCommand
 {
     empty,
     setWorldWrench,
+    resetHumanMass
 };
 
 /** 
@@ -108,6 +109,8 @@ struct WrenchSourceData
 class HumanWrenchProvider::Impl
 {
 public:
+    static constexpr double GRAVITY_ACCELERATION = 9.81;
+
     // constructor
     Impl();
 
@@ -201,7 +204,8 @@ public:
     {
         yarp::os::Bottle command, response;
         if (command.read(connection)) {
-            if (command.get(0).asString() == "setWorldWrench") {
+            std::string commandString = command.get(0).asString();
+            if (commandString == "setWorldWrench") {
                 this->cmdStatus = rpcCommand::setWorldWrench;
                 this->wrench_fx = command.get(1).asFloat64();
                 this->wrench_fy = command.get(2).asFloat64();
@@ -209,6 +213,9 @@ public:
                 this->wrench_tx = command.get(4).asFloat64();
                 this->wrench_ty = command.get(5).asFloat64();
                 this->wrench_tz = command.get(6).asFloat64();
+            }
+            else if (commandString == "resetHumanMass") {
+                this->cmdStatus = rpcCommand::resetHumanMass;
             }
             else {
                 response.addString(
@@ -449,7 +456,7 @@ bool HumanWrenchProvider::open(yarp::os::Searchable& config)
     //Set gravity vector
     pImpl->world_gravity.setVal(0, 0);
     pImpl->world_gravity.setVal(1, 0);
-    pImpl->world_gravity.setVal(2, -9.81);
+    pImpl->world_gravity.setVal(2, -HumanWrenchProvider::Impl::GRAVITY_ACCELERATION);
 
     // ===============================
     // CHECK THE CONFIGURATION OPTIONS
@@ -1571,6 +1578,20 @@ bool HumanWrenchProvider::Impl::applyRpcCommand()
 
             }
             break;
+        }
+        case rpcCommand::resetHumanMass : {
+            double sumOfForces = 0;
+            for (const auto & forceSource : wrenchSources) {
+                if(forceSource.type == WrenchSourceType::Fixed)
+                {
+                    auto linearForce = forceSource.wrench.getLinearVec3();
+                    sumOfForces += sqrt(linearForce[0]*linearForce[0] +
+                                        linearForce[1]*linearForce[1] +
+                                        linearForce[2]*linearForce[2]);
+                }
+            }
+
+            humanMass = sumOfForces/HumanWrenchProvider::Impl::GRAVITY_ACCELERATION;
         }
         default : {
             yWarning() << LogPrefix << "Command not valid";
